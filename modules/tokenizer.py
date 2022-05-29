@@ -1,48 +1,34 @@
+from abc import abstractmethod
+
 import json
 import re
 from collections import Counter
-# imports for testing module
+#imports for testing module
 # import argparse
 
 
 class Tokenizer(object):
-    def __init__(self, args, column_type, column=None):
+    def __init__(self, args, column=None):
         self.ann_path = args.ann_path
-        self.column_type = column_type
         self.threshold = args.threshold
         self.ann = json.loads(open(self.ann_path, 'r').read())
 
-        if self.column_type != 2:
-            assert column is not None, "column value can't be None, Please provide column name while initializing " \
+        assert column is not None, "column value can't be None, Please provide column name while initializing " \
                                        "tokenizer "
-            assert column in ['report', 'impression'], "column value can be either 'report' or 'impression'"
+        assert column in ['report', 'impression'], "column value can be either 'report' or 'impression'"
 
-        print('Building vocabulary with column type {} and threshold {}'.format(column_type, args.threshold))
+        print('Building vocabulary with threshold {}'.format(args.threshold))
         self.token2idx, self.idx2token = self.create_vocabulary(column)
         print('Vocabulary length {}'.format(self.get_vocab_size()))
 
+    @abstractmethod
     def create_vocabulary(self, column=None):
-        total_tokens = []
+        raise NotImplementedError
 
-        if self.column_type != 2:
-            for example in self.ann['train']:
-                tokens = self.clean_report(example[column]).split()
-                for token in tokens:
-                    total_tokens.append(token)
-        else:
-            for example in self.ann['train']:
-                tokens = self.clean_report(example['report']).split() + self.clean_report(example['impression']).split()
-                for token in tokens:
-                    total_tokens.append(token)
+    @abstractmethod
+    def decode(_self, ids):
+        raise NotImplementedError
 
-        counter = Counter(total_tokens)
-        vocab = [k for k, v in counter.items() if v >= self.threshold] + ['<unk>']
-        vocab.sort()
-        token2idx, idx2token = {}, {}
-        for idx, token in enumerate(vocab):
-            token2idx[token] = idx + 1
-            idx2token[idx + 1] = token
-        return token2idx, idx2token
 
     def clean_report(self, report):
         report_cleaner = lambda t: t.replace('\n', ' ').replace('__', '_').replace('__', '_').replace('__', '_') \
@@ -68,15 +54,42 @@ class Tokenizer(object):
         return self.token2idx[token]
 
     def get_vocab_size(self):
-        return len(self.token2idx)
+        return len(self.idx2token)
 
-    def __call__(self, report):
-        tokens = self.clean_report(report).split()
+    def decode_batch(self, ids_batch):
+        out = []
+        for ids in ids_batch:
+            out.append(self.decode(ids))
+        return out
+
+class Tokenizer_R2G(Tokenizer):
+    def __int__(self, args, column=None):
+        super(Tokenizer_R2G, self).__int__(args, column)
+
+    def __call__(self, txt):
+        tokens = self.clean_report(txt).split()
         ids = []
         for token in tokens:
             ids.append(self.get_id_by_token(token))
         ids = [0] + ids + [0]
         return ids
+
+    def create_vocabulary(self, column=None):
+        total_tokens = []
+
+        for example in self.ann['train']:
+            tokens = self.clean_report(example[column]).split()
+            for token in tokens:
+                total_tokens.append(token)
+
+        counter = Counter(total_tokens)
+        vocab = [k for k, v in counter.items() if v >= self.threshold] + ['<unk>']
+        vocab.sort()
+        token2idx, idx2token = {}, {}
+        for idx, token in enumerate(vocab):
+            token2idx[token] = idx + 1
+            idx2token[idx + 1] = token
+        return token2idx, idx2token
 
     def decode(self, ids):
         txt = ''
@@ -86,15 +99,74 @@ class Tokenizer(object):
                     txt += ' '
                 txt += self.idx2token[idx]
             else:
-                break
+                pass
         return txt
 
-    def decode_batch(self, ids_batch):
-        out = []
-        for ids in ids_batch:
-            out.append(self.decode(ids))
-        return out
 
+class Tokenizer_others(Tokenizer):
+    def __int__(self, args, column=None):
+        super(Tokenizer_others, self).__int__(args, column)
+
+    def __call__(self, txt):
+        tokens = self.clean_report(txt).split()
+        ids = []
+        for token in tokens:
+            ids.append(self.get_id_by_token(token))
+        ids = [2] + ids + [3]
+        return ids
+
+    def decode(self, ids):
+        txt = ''
+        for i, idx in enumerate(ids):
+            if idx > 3:
+                if i >= 1:
+                    txt += ' '
+                txt += self.idx2token[idx]
+            else:
+                pass
+        return txt
+
+class Tokenizer_SAT(Tokenizer_others):
+    def __init__(self, args, column):
+        super(Tokenizer_SAT, self).__init__(args, column)
+
+    def create_vocabulary(self, column=None):
+        total_tokens = []
+
+        for example in self.ann['train']:
+            tokens = self.clean_report(example[column]).split()
+            for token in tokens:
+                total_tokens.append(token)
+
+        counter = Counter(total_tokens)
+        vocab = [k for k, v in counter.items() if v >= self.threshold]
+        vocab.sort()
+        token2idx, idx2token = {'<pad>': 0, '<unk>': 1, '<bos>': 2, '<eos>': 3}, {0: '<pad>', 1: '<unk>', 2 : '<bos>', 3: '<eos>'}
+        for idx, token in enumerate(vocab):
+            token2idx[token] = idx + 4
+            idx2token[idx + 4] = token
+        return token2idx, idx2token
+
+class Tokenizer_SS(Tokenizer_others):
+    def __init__(self, args, column):
+        super(Tokenizer_SS, self).__init__(args, column)
+
+    def create_vocabulary(self, column=None):
+        total_tokens = []
+
+        for example in self.ann['train']:
+            tokens = self.clean_report(example[column]).split()
+            for token in tokens:
+                total_tokens.append(token)
+
+        counter = Counter(total_tokens)
+        vocab = [k for k, v in counter.items() if v >= self.threshold]
+        vocab.sort()
+        token2idx, idx2token = {'<unk>': 0, '<pad>': 1, '<bos>': 2, '<eos>': 3}, {0: '<unk>', 1: '<pad>', 2 : '<bos>', 3: '<eos>'}
+        for idx, token in enumerate(vocab):
+            token2idx[token] = idx + 4
+            idx2token[idx + 4] = token
+        return token2idx, idx2token
 
 # testing area below!!!
 
@@ -117,5 +189,5 @@ class Tokenizer(object):
 #     args = parse_args()
 #
 #     # create tokenizer
-#     tokenizer = Tokenizer(args, 2, 'impression')
+#     tokenizer = Tokenizer_image(args, 'impression')
 #     print(tokenizer.idx2token)

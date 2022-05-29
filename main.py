@@ -25,8 +25,8 @@ def parse_agrs():
                                                                                                   '1. R2G model'
                                                                                                   '2. SAT model'
                                                                                                   '3. S2S model')
-    parser.add_argument('--max_seq_length', type=int, default=100, help='the maximum sequence length of the reports.')
-    parser.add_argument('--threshold', type=int, default=10, help='the cut off frequency for the words.')
+    parser.add_argument('--max_seq_length', type=int, default=256, help='the maximum sequence length of the reports.')
+    parser.add_argument('--threshold', type=int, default=3, help='the cut off frequency for the words.')
     parser.add_argument('--num_workers', type=int, default=1, help='the number of workers for dataloader.')
     parser.add_argument('--batch_size', type=int, default=16, help='the number of samples for a batch')
 
@@ -34,12 +34,14 @@ def parse_agrs():
     parser.add_argument('--visual_extractor', type=str, default='resnet101', help='the visual extractor to be used.')
     parser.add_argument('--visual_extractor_pretrained', type=bool, default=True,
                         help='whether to load the pretrained visual extractor')
+    parser.add_argument('--fine_tune', type=bool, default=False, help='whether to fine tune the visual model, used only for SAT model.')
+    parser.add_argument('--enc_image_size', type=int, default=14, help='visual extractor encoding size, used only for SAT model.')
 
     # Model settings (for Transformer)
     parser.add_argument('--d_model', type=int, default=512, help='the dimension of Transformer.')
     parser.add_argument('--d_ff', type=int, default=512, help='the dimension of FFN.')
     parser.add_argument('--d_vf', type=int, default=2048, help='the dimension of the patch features.')
-    parser.add_argument('--emb_dim', type=int, default=256, help='the dimension of the word embedding.')
+    parser.add_argument('--emb_dim', type=int, default=512, help='the dimension of the word embedding.')
     parser.add_argument('--num_heads', type=int, default=8, help='the number of heads in Transformer.')
     parser.add_argument('--num_layers', type=int, default=3, help='the number of layers of Transformer.')
     parser.add_argument('--dropout', type=float, default=0.1, help='the dropout rate of Transformer.')
@@ -57,7 +59,7 @@ def parse_agrs():
     # Sample related
     parser.add_argument('--sample_method', type=str, default='beam_search',
                         help='the sample methods to sample a report.')
-    parser.add_argument('--beam_size', type=int, default=3, help='the beam size when beam searching.')
+    parser.add_argument('--beam_size', type=int, default=10, help='the beam size when beam searching.')
     parser.add_argument('--temperature', type=float, default=1.0, help='the temperature when sampling.')
     parser.add_argument('--sample_n', type=int, default=1, help='the sample number per image.')
     parser.add_argument('--group_size', type=int, default=1, help='the group size.')
@@ -89,6 +91,9 @@ def parse_agrs():
     parser.add_argument('--lr_scheduler', type=str, default='StepLR', help='the type of the learning rate scheduler.')
     parser.add_argument('--step_size', type=int, default=50, help='the step size of the learning rate scheduler.')
     parser.add_argument('--gamma', type=float, default=0.1, help='the gamma of the learning rate scheduler.')
+
+    # Loss function hyperparameter for SAT
+    parser.add_argument('--alpha_c', type=float, default=1.0, help='regularization parameter for doubly stochastic attention, as in the SAT paper.')
 
     # Others
     parser.add_argument('--seed', type=int, default=9233, help='.')

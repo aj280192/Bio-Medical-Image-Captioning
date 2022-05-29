@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 import json
-from modules.tokenizer import Tokenizer
-from modules.dataloaders import ImageDataLoader, SSDataLoader # STSDataLoader, SSIODataLoader
-from modules.loss import compute_loss
-from modules.optimizers import r2g_optimizer, normal_optimizer
+from modules.tokenizer import Tokenizer_R2G, Tokenizer_SAT, Tokenizer_SS
+from modules.dataloaders import ImageDataLoader, SSDataLoader
+from modules.loss import compute_loss, SimpleLossCompute
+from modules.optimizers import r2g_optimizer, normal_optimizer, s2s_optimizer
 from models.r2gen import R2GenModel
 from models.sat import SATModel
 from models.s2s import S2SModel
@@ -21,9 +21,10 @@ def dynamic_flow(args):
     config = config_all[args.model_type]
     args.model_type = config['model_type']
 
-    if type(config['tokenizer']) != list:
 
-        tokenizer = eval(config['tokenizer'])(args, config['column_type'], config['columns'])
+    if config['model_type'] != "S2S":
+
+        tokenizer = eval(config['tokenizer'])(args, config['columns'])
 
         train_dataloader = eval(config['dataloader_class'])(args, split='train', shuffle=True, tokenizer=tokenizer)
         test_dataloader = eval(config['dataloader_class'])(args, split='test', shuffle=False, tokenizer=tokenizer)
@@ -31,10 +32,15 @@ def dynamic_flow(args):
 
         model = eval(config['model_class'])(args, tokenizer)
 
+        if config['model_type'] == ' R2G':
+            criterion = compute_loss
+        else:
+            criterion = nn.CrossEntropyLoss(ignore_index=0)
+
     else:
 
-        tokenizer_in = eval(config['tokenizer'][0])(args, config['column_type'], config['columns'][0])
-        tokenizer_out = eval(config['tokenizer'][1])(args, config['column_type'], config['columns'][1])
+        tokenizer_in = eval(config['tokenizer'])(args, config['columns'][0])
+        tokenizer_out = eval(config['tokenizer'])(args, config['columns'][1])
 
         train_dataloader = eval(config['dataloader_class'])(args, split='train', shuffle=True,
                                                             tokenizer_in=tokenizer_in,
@@ -46,15 +52,9 @@ def dynamic_flow(args):
 
         model = eval(config['model_class'])(args, tokenizer_in, tokenizer_out)
 
-    if config['model_type'] != 'S2S':
-        criterion = compute_loss
-    else:
-        criterion = nn.CrossEntropyLoss(ignore_index=0)
+        criterion = SimpleLossCompute(len(tokenizer_out.idx2token))
 
-    if config['model_type'] in ['R2G','SAT']:
-        optimizer = r2g_optimizer(args, model)
-    else:
-        optimizer = normal_optimizer(args, model)
+    optimizer = eval(config['opt'])(args, model)
 
     return model, train_dataloader, test_dataloader, val_dataloader, criterion, optimizer
 

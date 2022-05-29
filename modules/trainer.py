@@ -7,6 +7,7 @@ import pandas as pd
 from numpy import inf
 
 from tqdm import tqdm
+from torch.nn.utils.rnn import pack_padded_sequence
 
 class BaseTrainer(object):
     def __init__(self, model, criterion, metric_ftns, bert_metrics, optimizer, args):
@@ -37,6 +38,9 @@ class BaseTrainer(object):
         self.start_epoch = 1
         self.checkpoint_dir = os.path.join(args.save_dir, args.model_type)
 
+        # only used for SAT model loss
+        self.alpha_c = args.alpha_c
+
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
@@ -57,8 +61,11 @@ class BaseTrainer(object):
     def train(self):
         not_improved_count = 0
         for epoch in tqdm(range(self.start_epoch, self.epochs + 1)):
-            if self.args.model_type in ['R2G', 'SAT']:
-                result = self._train_epoch_image(epoch)
+
+            if self.args.model_type == 'R2G':
+                result = self._train_epoch_r2g(epoch)
+            elif self.args.model_type == 'SAT':
+                result = self._train_epoch_sat(epoch)
             else:
                 result = self._train_epoch_ss(epoch)
 
@@ -194,14 +201,16 @@ class Trainer(BaseTrainer):
         self.val_dataloader = val_dataloader
         self.test_dataloader = test_dataloader
 
-    def _train_epoch_image(self, epoch):
+    def _train_epoch_r2g(self, epoch):
 
         train_loss = 0
         self.model.train()
-        for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(tqdm(self.train_dataloader)):
-            images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(
+        for batch_idx, (images_id, images, reports_ids, reports_masks, _) in enumerate(tqdm(self.train_dataloader)):
+            images, reports_ids, reports_masks, report_len = images.to(self.device), reports_ids.to(self.device), reports_masks.to(
                 self.device)
+
             output = self.model(images, reports_ids, mode='train')
+
             loss = self.criterion(output, reports_ids, reports_masks)
             train_loss += loss.item()
             self.optimizer.zero_grad()
@@ -213,16 +222,13 @@ class Trainer(BaseTrainer):
         self.model.eval()
         with torch.no_grad():
             val_gts, val_res = [], []
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.val_dataloader):
+            for batch_idx, (images_id, images, reports_ids, reports_masks, _) in enumerate(self.val_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
 
-                if self.args.model_type == 'R2G':
-                    output = self.model(images, mode='sample')
-                else:
-                    output = self.model(images, reports_ids, mode='sample')
-
+                output = self.model(images, mode='sample')
                 reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
+
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 val_res.extend(reports)
                 val_gts.extend(ground_truths)
@@ -233,16 +239,13 @@ class Trainer(BaseTrainer):
         self.model.eval()
         with torch.no_grad():
             test_gts, test_res = [], []
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(self.test_dataloader):
+            for batch_idx, (images_id, images, reports_ids, reports_masks, _) in enumerate(self.test_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
 
-                if self.args.model_type == 'R2G':
-                    output = self.model(images, mode='sample')
-                else:
-                    output = self.model(images, reports_ids, mode='sample')
-
+                output = self.model(images, mode='sample')
                 reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
+
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 test_res.extend(reports)
                 test_gts.extend(ground_truths)
@@ -251,6 +254,79 @@ class Trainer(BaseTrainer):
             log.update(**{'test_' + k: v for k, v in test_met.items()})
 
         self.lr_scheduler.step()
+
+        return log
+
+    def _train_epoch_sat(self, epoch):
+
+        train_loss = 0
+        self.model.train()
+        for batch_idx, (images_id, images, reports_ids, _, report_len) in enumerate(tqdm(self.train_dataloader)):
+
+            images, reports_ids, report_len = images.to(self.device), reports_ids.to(self.device), report_len.to(self.device)
+
+            scores, caps_sorted, decode_lengths, alphas = self.model(images, reports_ids, report_len, mode='train')
+
+            # since we decoded starting with <start>, the targets are all words after <start>, up to <end>
+            targets = caps_sorted[:, 1:]
+
+            # remove timesteps that we didn't decode at, or are pads
+            scores = pack_padded_sequence(scores, decode_lengths, batch_first=True).data
+            targets = pack_padded_sequence(targets, decode_lengths, batch_first=True).data
+
+            # calculate the loss
+            loss = self.criterion(scores, targets) + self.alpha_c * ((1. - alphas.sum(dim=1)) ** 2).mean()
+            train_loss += loss.item()
+
+            # backprop
+            self.optimizer.zero_grad()
+            loss.backward()
+
+            # clip gradients
+            torch.nn.utils.clip_grad_value_(self.model.parameters(), 0.1)
+
+            # update weights
+            self.optimizer.step()
+
+        log = {'train_loss': train_loss / len(self.train_dataloader)}
+
+        self.model.eval()
+        with torch.no_grad():
+            val_gts, val_res = [], []
+            for batch_idx, (images_id, images, reports_ids, _, report_len) in enumerate(self.val_dataloader):
+
+                images, reports_ids = images.to(self.device), reports_ids.to(self.device)
+
+                output = self.model(images, targets_len= report_len, mode='sample')
+
+                reports = self.model.tokenizer.decode_batch(output)
+
+                ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+                val_res.extend(reports)
+                val_gts.extend(ground_truths)
+            val_met = self.metric_ftns({i: [gt] for i, gt in enumerate(val_gts)},
+                                       {i: [re] for i, re in enumerate(val_res)})
+            log.update(**{'val_' + k: v for k, v in val_met.items()})
+
+        self.model.eval()
+        with torch.no_grad():
+            test_gts, test_res = [], []
+            for batch_idx, (images_id, images, reports_ids, _, report_len) in enumerate(self.test_dataloader):
+
+                images, reports_ids = images.to(self.device), reports_ids.to(self.device)
+
+                output = self.model(images, targets_len= report_len, mode='sample')
+
+                reports = self.model.tokenizer.decode_batch(output)
+
+                ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+                test_res.extend(reports)
+                test_gts.extend(ground_truths)
+            test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
+                                        {i: [re] for i, re in enumerate(test_res)})
+            log.update(**{'test_' + k: v for k, v in test_met.items()})
+
+        self.lr_scheduler.step(log['val_BLEU_4'])
 
         return log
 
@@ -264,13 +340,15 @@ class Trainer(BaseTrainer):
 
             output = self.model(reports_ids, impression_ids, mode='train')
 
-            loss = self.criterion(output.reshape(-1, output.shape[-1]), impression_ids[1:, :].reshape(-1))
+            n_tokens = (impression_ids[:, 1:] != 1).data.sum()
+
+            loss, loss_node = self.criterion(output, impression_ids[:, 1:], n_tokens)
 
             train_loss += loss.item()
-            self.optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_value_(self.model.parameters(), 0.1)
+            loss_node.backward()
             self.optimizer.step()
+            self.lr_scheduler.step()
+            self.optimizer.zero_grad()
 
         log = {'train_loss': train_loss / len(self.train_dataloader)}
 
@@ -279,12 +357,12 @@ class Trainer(BaseTrainer):
             val_gts, val_res = [], []
             for batch_idx, (study_id, reports_ids, impression_ids) in enumerate(self.val_dataloader):
 
-                reports_ids, impression_ids = reports_ids.T.to(self.device), impression_ids.T.to(self.device)
+                reports_ids, impression_ids = reports_ids.to(self.device), impression_ids.to(self.device)
 
                 output = self.model(reports_ids, impression_ids, mode='sample')
-                reports = self.model.tokenizer_in.decode_batch(output.cpu().numpy())
+                impressions = self.model.tokenizer_out.decode_batch(output)
                 ground_truths = self.model.tokenizer_out.decode_batch(impression_ids[:, 1:].cpu().numpy())
-                val_res.extend(reports)
+                val_res.extend(impressions)
                 val_gts.extend(ground_truths)
             val_met = self.metric_ftns({i: [gt] for i, gt in enumerate(val_gts)},
                                        {i: [re] for i, re in enumerate(val_res)})
@@ -294,18 +372,16 @@ class Trainer(BaseTrainer):
         with torch.no_grad():
             test_gts, test_res = [], []
             for batch_idx, (study_id, reports_ids, impression_ids) in enumerate(self.test_dataloader):
-                reports_ids, impression_ids = reports_ids.T.to(self.device), impression_ids.T.to(self.device)
+                reports_ids, impression_ids = reports_ids.to(self.device), impression_ids.to(self.device)
 
                 output = self.model(reports_ids, impression_ids, mode='sample')
-                reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
-                ground_truths = self.model.tokenizer.decode_batch(impression_ids[:, 1:].cpu().numpy())
-                test_res.extend(reports)
+                impressions = self.model.tokenizer_out.decode_batch(output)
+                ground_truths = self.model.tokenizer_out.decode_batch(impression_ids[:, 1:].cpu().numpy())
+                test_res.extend(impressions)
                 test_gts.extend(ground_truths)
             test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
                                         {i: [re] for i, re in enumerate(test_res)})
             log.update(**{'test_' + k: v for k, v in test_met.items()})
-
-        self.lr_scheduler.step()
 
         return log
 
@@ -327,10 +403,11 @@ class Trainer(BaseTrainer):
 
                 if self.args.model_type == 'R2G':
                     output = self.model(images, mode='sample')
+                    reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
                 else:
                     output = self.model(images, reports_ids, mode='sample')
+                    reports = self.model.tokenizer.decode_batch(output)
 
-                reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
                 test_res.extend(reports)
                 test_gts.extend(ground_truths)

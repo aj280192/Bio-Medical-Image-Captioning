@@ -59,7 +59,7 @@ class ImageDataLoader(DataLoader):
         for i, report_masks in enumerate(reports_masks):
             targets_masks[i, :len(report_masks)] = report_masks
 
-        return images_id, images, torch.LongTensor(targets), torch.FloatTensor(targets_masks)
+        return images_id, images, torch.LongTensor(targets), torch.FloatTensor(targets_masks), torch.LongTensor(seq_lengths).unsqueeze(1)
 
 class SSDataLoader(DataLoader):
     def __init__(self, args, split, shuffle, tokenizer_in, tokenizer_out):
@@ -84,14 +84,13 @@ class SSDataLoader(DataLoader):
 
     @staticmethod
     def collate_fn(data):
-        study_ids, reports_ids, impressions_ids, impression_masks, rep_lengths, imp_lengths = zip(*data)
+        study_ids, reports_ids, impressions_ids, rep_lengths, imp_lengths = zip(*data)
 
         max_rep_length = max(rep_lengths)
         max_imp_length = max(imp_lengths)
 
-        reports = np.zeros((len(reports_ids), max_rep_length), dtype=int)
-        impressions = np.zeros((len(impressions_ids), max_imp_length), dtype=int)
-        # targets_masks = np.zeros((len(reports_ids), max_imp_length), dtype=int)
+        reports = np.ones((len(reports_ids), max_rep_length), dtype=int)
+        impressions = np.ones((len(impressions_ids), max_imp_length), dtype=int)
 
         for i, report_ids in enumerate(reports_ids):
             reports[i, :len(report_ids)] = report_ids
@@ -99,10 +98,7 @@ class SSDataLoader(DataLoader):
         for i, impression_ids in enumerate(impressions_ids):
             impressions[i, :len(impression_ids)] = impression_ids
 
-        # for i, mask in enumerate(impression_masks):
-        #     targets_masks[i, :len(mask)] = mask
-        # Transpose is done so the output of the loader is not batch first. seq_len x batch_size.
-        return study_ids, torch.LongTensor(reports).T, torch.LongTensor(impressions).T #, torch.FloatTensor(targets_masks).T
+        return study_ids, torch.LongTensor(reports), torch.LongTensor(impressions)
 
 # class STSDataLoader(DataLoader):
 #     def __init__(self, args, split, shuffle, tokenizer):
