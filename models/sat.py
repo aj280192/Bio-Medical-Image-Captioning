@@ -186,14 +186,75 @@ class DecoderWithAttention(nn.Module):
         return predictions, encoded_captions, decode_lens, alphas
 
     def _sample(self, features, targets_len):
+
+       if self.beam_size == 0:
+           return self._greedy_search(features, targets_len)
+       else:
+           return self._beam_search(features, targets_len)
+
+    def _greedy_search(self, features, targets_len):
+        """
+        Forward propagation.
+        :param features: encoded images, a tensor of dimension (batch_size, enc_image_size, enc_image_size, encoder_dim)
+        :param targets_len: caption lengths, a tensor of dimension (batch_size, 1)
+        :return: predictions
+        """
+        batch_size = features.size(0)
+
+        # flatten image
+        encoder_out = features.view(batch_size, -1, self.encoder_dim)  # (batch_size, num_pixels, encoder_dim)
+
+        # initial input tokens
+        input_words = torch.tensor([[2]] * batch_size, dtype=torch.long).to(features.device) # batch_size , 1
+
+        # initialize lstm state
+        h, c = self.init_hidden_state(encoder_out)  # (batch_size, decoder_dim)
+
+        # create tensors to hold word predictions
+        predictions = torch.zeros(batch_size, max(targets_len)).to(encoder_out.device)
+
+        # At each time-step, decode by attention-weighing the encoder's output based on the
+        # decoder's previous hidden state output then generate a new word in the decoder with
+        # the previous word and the attention weighted encoding
+        for t in range(max(targets_len)):
+            # embedding
+            embeddings = self.embedding(input_words).squeeze(1)  # (batch_size, embed_dim)
+
+            # get the attention weighted encodings (batch_size, encoder_dim)
+            attention_weighted_encoding, alpha = self.attention(encoder_out, h)
+
+            gate = F.sigmoid(self.f_beta(h))  # sigmoid gating scalar, (batch_size, encoder_dim)
+            attention_weighted_encoding = gate * attention_weighted_encoding
+
+            # get the decoder hidden state and cell state based on the embeddings of timestep t word
+            # and the attention weighted encoding
+            h, c = self.decode_step(
+                torch.cat([embeddings, attention_weighted_encoding], dim=1),
+                (h, c)
+            )  # (batch_size_t, decoder_dim)
+
+            # get the next word prediction
+            preds = self.fc(self.dropout(h))  # (batch_size, vocab_size)
+            scoring = F.log_softmax(preds, dim=1)
+            top_idx = scoring.topk(1)[1].squeeze(1)
+            input_word = top_idx
+
+            # save the prediction and alpha for every time step
+            predictions[:, t] = top_idx
+
+
+        return predictions.cpu().numpy()
+
+    def _beam_search(self, features, targets_len):
+
         output = []
         # targets_len = targets_len.tolist()
         for feature, max_len in zip(features, targets_len.squeeze(1)):
-            output.append(self._beam_search(feature.unsqueeze(0), max_len))
+            output.append(self._generate_captions(feature.unsqueeze(0), max_len))
 
         return output
 
-    def _beam_search(self, feature, max_len):
+    def _generate_captions(self, feature, max_len):
         """
             Reads an image and captions it with beam search as well as plot attention maps.
         """
