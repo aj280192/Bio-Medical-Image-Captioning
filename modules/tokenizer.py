@@ -122,8 +122,8 @@ class Tokenizer_others(Tokenizer):
                 if i >= 1:
                     txt += ' '
                 txt += self.idx2token[idx]
-            else:
-                pass
+            elif idx == 3:
+                break
         return txt
 
 class Tokenizer_SAT(Tokenizer_others):

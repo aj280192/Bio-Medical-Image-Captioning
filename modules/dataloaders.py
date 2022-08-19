@@ -84,13 +84,14 @@ class SSDataLoader(DataLoader):
 
     @staticmethod
     def collate_fn(data):
-        study_ids, reports_ids, impressions_ids, rep_lengths, imp_lengths = zip(*data)
+        study_ids, reports_ids, impressions_ids, rep_lengths, imp_lengths, masks = zip(*data)
 
         max_rep_length = max(rep_lengths)
         max_imp_length = max(imp_lengths)
 
         reports = np.ones((len(reports_ids), max_rep_length), dtype=int)
         impressions = np.ones((len(impressions_ids), max_imp_length), dtype=int)
+        targets_masks = np.zeros((len(impressions_ids), max_imp_length), dtype=int)
 
         for i, report_ids in enumerate(reports_ids):
             reports[i, :len(report_ids)] = report_ids
@@ -98,7 +99,10 @@ class SSDataLoader(DataLoader):
         for i, impression_ids in enumerate(impressions_ids):
             impressions[i, :len(impression_ids)] = impression_ids
 
-        return study_ids, torch.LongTensor(reports), torch.LongTensor(impressions)
+        for i, impression_masks in enumerate(masks):
+            targets_masks[i, :len(impression_masks)] = impression_masks
+
+        return study_ids, torch.LongTensor(reports), torch.LongTensor(impressions), torch.FloatTensor(targets_masks)
 
 # class STSDataLoader(DataLoader):
 #     def __init__(self, args, split, shuffle, tokenizer):

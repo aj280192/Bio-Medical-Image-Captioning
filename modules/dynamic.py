@@ -4,7 +4,7 @@ import json
 from modules.tokenizer import Tokenizer_R2G, Tokenizer_SAT, Tokenizer_SS
 from modules.dataloaders import ImageDataLoader, SSDataLoader
 from modules.loss import compute_loss, SimpleLossCompute
-from modules.optimizers import r2g_optimizer, normal_optimizer, s2s_optimizer
+from modules.optimizers import r2g_optimizer, normal_optimizer, s2s_optimizer, sat_optimizer
 from models.r2gen import R2GenModel
 from models.sat import SATModel
 from models.s2s import S2SModel
@@ -32,10 +32,11 @@ def dynamic_flow(args):
 
         model = eval(config['model_class'])(args, tokenizer)
 
-        if config['model_type'] == ' R2G':
-            criterion = compute_loss
-        else:
-            criterion = nn.CrossEntropyLoss(ignore_index=0)
+        # if config['model_type'] == 'R2G':
+        #     print('setting compute')
+        #     criterion = compute_loss
+        # else:
+        #     criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     else:
 
@@ -52,7 +53,12 @@ def dynamic_flow(args):
 
         model = eval(config['model_class'])(args, tokenizer_in, tokenizer_out)
 
-        criterion = SimpleLossCompute(len(tokenizer_out.idx2token))
+        # criterion = SimpleLossCompute(len(tokenizer_out.idx2token))
+
+    if config['model_type'] != 'SAT':
+        criterion = compute_loss
+    else:
+        criterion = nn.CrossEntropyLoss(ignore_index=0)
 
     optimizer = eval(config['opt'])(args, model)
 

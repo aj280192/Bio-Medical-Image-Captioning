@@ -165,7 +165,6 @@ class DecoderWithAttention(nn.Module):
 
             # get the attention weighted encodings (batch_size_t, encoder_dim)
             attention_weighted_encoding, alpha = self.attention(encoder_out[:batch_size_t], h[:batch_size_t])
-
             gate = F.sigmoid(self.f_beta(h[:batch_size_t]))  # sigmoid gating scalar, (batch_size_t, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding
 
@@ -222,6 +221,7 @@ class DecoderWithAttention(nn.Module):
 
             # get the attention weighted encodings (batch_size, encoder_dim)
             attention_weighted_encoding, alpha = self.attention(encoder_out, h)
+            print(attention_weighted_encoding.shape)
 
             gate = F.sigmoid(self.f_beta(h))  # sigmoid gating scalar, (batch_size, encoder_dim)
             attention_weighted_encoding = gate * attention_weighted_encoding

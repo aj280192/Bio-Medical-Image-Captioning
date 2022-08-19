@@ -16,7 +16,7 @@ class S2SModel(nn.Module):
         self.vocab_size_in = len(tokenizer_in.idx2token)
         self.vocab_size_out = len(tokenizer_out.idx2token)
 
-        self.seqtransformer = Seq2SeqTransformer(self.args, self.vocab_size_in, self.vocab_size_out)
+            self.seqtransformer = Seq2SeqTransformer(self.args, self.vocab_size_in, self.vocab_size_out)
 
         for p in self.seqtransformer.parameters():
             if p.dim() > 1:
@@ -140,7 +140,7 @@ class Seq2SeqTransformer(nn.Module):
         tgt_emb = self.positional_encoding(self.tgt_tok_emb(trg))
         outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
                                 src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
-        return self.generator(outs)
+        return torch.log_softmax(self.generator(outs), dim=-1) #self.generator(outs)
 
     def encode(self, src: Tensor, src_mask: Tensor):
         return self.transformer.encoder(self.positional_encoding(
@@ -273,6 +273,7 @@ class Seq2SeqTransformer(nn.Module):
                 if not (len(complete_seqs) > 0):
                     return top_k_seqs[top_k_scores.argmax()].tolist()
                 break
+
             step += 1
 
         # select sequence with max score

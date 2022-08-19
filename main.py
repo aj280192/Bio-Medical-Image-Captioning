@@ -20,21 +20,21 @@ def parse_agrs():
     parser.add_argument('--config_path', type=str, default='D:\\TU Berlin\\Thesis\\Codes\\Master\\config.json')
 
     # Data loader settings
-    parser.add_argument('--model_type', type=str, default='3', choices=['1', '2', '3'], help='the model to be '
+    parser.add_argument('--model_type', type=str, default='2', choices=['1', '2', '3'], help='the model to be '
                                                                                                   'used. '
                                                                                                   '1. R2G model'
                                                                                                   '2. SAT model'
                                                                                                   '3. S2S model')
     parser.add_argument('--max_seq_length', type=int, default=256, help='the maximum sequence length of the reports.')
-    parser.add_argument('--threshold', type=int, default=3, help='the cut off frequency for the words.')
+    parser.add_argument('--threshold', type=int, default=1, help='the cut off frequency for the words.')
     parser.add_argument('--num_workers', type=int, default=1, help='the number of workers for dataloader.')
-    parser.add_argument('--batch_size', type=int, default=16, help='the number of samples for a batch')
+    parser.add_argument('--batch_size', type=int, default=8, help='the number of samples for a batch')
 
     # Model settings (for visual extractor)
     parser.add_argument('--visual_extractor', type=str, default='resnet101', help='the visual extractor to be used.')
     parser.add_argument('--visual_extractor_pretrained', type=bool, default=True,
                         help='whether to load the pretrained visual extractor')
-    parser.add_argument('--fine_tune', type=bool, default=False, help='whether to fine tune the visual model, used only for SAT model.')
+    parser.add_argument('--fine_tune', type=bool, default=True, help='whether to fine tune the visual model, used only for SAT model.')
     parser.add_argument('--enc_image_size', type=int, default=14, help='visual extractor encoding size, used only for SAT model.')
 
     # Model settings (for Transformer)
@@ -59,7 +59,7 @@ def parse_agrs():
     # Sample related
     parser.add_argument('--sample_method', type=str, default='beam_search',
                         help='the sample methods to sample a report.')
-    parser.add_argument('--beam_size', type=int, default=10, help='the beam size when beam searching.')
+    parser.add_argument('--beam_size', type=int, default=0, help='the beam size when beam searching.')
     parser.add_argument('--temperature', type=float, default=1.0, help='the temperature when sampling.')
     parser.add_argument('--sample_n', type=int, default=1, help='the sample number per image.')
     parser.add_argument('--group_size', type=int, default=1, help='the group size.')
@@ -69,7 +69,7 @@ def parse_agrs():
 
     # Trainer settings
     parser.add_argument('--n_gpu', type=int, default=1, help='the number of gpus to be used.')
-    parser.add_argument('--epochs', type=int, default=1, help='the number of training epochs.')
+    parser.add_argument('--epochs', type=int, default=12, help='the number of training epochs.')
     parser.add_argument('--save_dir', type=str, default='results\\mimic_cxr', help='the patch to save the models.')
     parser.add_argument('--record_dir', type=str, default='records\\',
                         help='the patch to save the results of experiments')
@@ -81,16 +81,16 @@ def parse_agrs():
 
     # Optimization
     parser.add_argument('--optim', type=str, default='Adam', help='the type of the optimizer.')
-    parser.add_argument('--lr_ve', type=float, default=5e-5, help='the learning rate for the visual extractor.')
+    parser.add_argument('--lr_ve', type=float, default=4e-5, help='the learning rate for the visual extractor.')
     parser.add_argument('--lr_ed', type=float, default=1e-4, help='the learning rate for the remaining parameters.')
-    parser.add_argument('--lr', type=float, default=1e-4, help='the learning rate for the seq-2-seq models parameters.')
+    parser.add_argument('--lr', type=float, default=1e-5, help='the learning rate for the seq-2-seq models parameters.')
     parser.add_argument('--weight_decay', type=float, default=5e-5, help='the weight decay.')
     parser.add_argument('--amsgrad', type=bool, default=True, help='.')
 
     # Learning Rate Scheduler
     parser.add_argument('--lr_scheduler', type=str, default='StepLR', help='the type of the learning rate scheduler.')
-    parser.add_argument('--step_size', type=int, default=50, help='the step size of the learning rate scheduler.')
-    parser.add_argument('--gamma', type=float, default=0.1, help='the gamma of the learning rate scheduler.')
+    parser.add_argument('--step_size', type=int, default=1, help='the step size of the learning rate scheduler.')
+    parser.add_argument('--gamma', type=float, default=0.85, help='the gamma of the learning rate scheduler.')
 
     # Loss function hyperparameter for SAT
     parser.add_argument('--alpha_c', type=float, default=1.0, help='regularization parameter for doubly stochastic attention, as in the SAT paper.')
@@ -114,7 +114,7 @@ def main():
     np.random.seed(args.seed)
 
     # model, loaders, criterion and optimizer for training.
-    model, train_dataloader, val_dataloader, test_dataloader, criterion, optimizer = dynamic_flow(args)
+    model, train_dataloader, test_dataloader, val_dataloader, criterion, optimizer = dynamic_flow(args)
 
     # get function to handle the metrics
     metrics = compute_scores
@@ -125,9 +125,11 @@ def main():
 
     # build trainer and start to train
     trainer = Trainer(model, criterion, metrics, bert_met, optimizer, args, lr_scheduler, train_dataloader,
-                      val_dataloader,
-                      test_dataloader)  # need to change the trainer class based on the model and loader
+                      test_dataloader,
+                      val_dataloader)  # need to change the trainer class based on the model and loader
+
     trainer.train()
+    # trainer.eval()
     # metrics = trainer.test('D:\\TU Berlin\\Thesis\\Codes\\Master\\results\\mimic_cxr\\SAT\\model_best.pth')
     # print(metrics)
 

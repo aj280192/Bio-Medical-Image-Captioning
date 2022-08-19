@@ -108,6 +108,18 @@ class BaseTrainer(object):
         self._print_best()
         self._print_best_to_file()
 
+    def eval(self):
+
+        if self.args.model_type == 'R2G':
+            self.eval_r2g()
+
+        elif self.args.model_type == 'SAT':
+            self.eval_sat()
+
+        else:
+            self.eval_ss()
+
+
     def _print_best_to_file(self):
         crt_time = time.asctime(time.localtime(time.time()))
         self.best_recorder['val']['time'] = crt_time
@@ -193,8 +205,8 @@ class BaseTrainer(object):
 
 
 class Trainer(BaseTrainer):
-    def __init__(self, model, criterion, metric_ftns, bert_metrics, optimizer, args, lr_scheduler, train_dataloader, val_dataloader,
-                 test_dataloader):
+    def __init__(self, model, criterion, metric_ftns, bert_metrics, optimizer, args, lr_scheduler, train_dataloader, test_dataloader,
+                 val_dataloader):
         super(Trainer, self).__init__(model, criterion, metric_ftns, bert_metrics,  optimizer, args)
         self.lr_scheduler = lr_scheduler
         self.train_dataloader = train_dataloader
@@ -206,7 +218,7 @@ class Trainer(BaseTrainer):
         train_loss = 0
         self.model.train()
         for batch_idx, (images_id, images, reports_ids, reports_masks, _) in enumerate(tqdm(self.train_dataloader)):
-            images, reports_ids, reports_masks, report_len = images.to(self.device), reports_ids.to(self.device), reports_masks.to(
+            images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(self.device), reports_masks.to(
                 self.device)
 
             output = self.model(images, reports_ids, mode='train')
@@ -326,36 +338,50 @@ class Trainer(BaseTrainer):
                                         {i: [re] for i, re in enumerate(test_res)})
             log.update(**{'test_' + k: v for k, v in test_met.items()})
 
-        self.lr_scheduler.step(log['val_BLEU_4'])
+        # self.lr_scheduler.step(log['val_BLEU_4'])
+        self.lr_scheduler.step()
+        print(self.optimizer.param_groups[0]["lr"], self.optimizer.param_groups[1]["lr"])
 
         return log
 
     def _train_epoch_ss(self, epoch): # work under progress.
 
         train_loss = 0
-        self.model.train()
-        for batch_idx, (study_id, reports_ids, impression_ids) in enumerate(tqdm(self.train_dataloader)):
+        # train_tokens = 0
 
-            reports_ids, impression_ids = reports_ids.to(self.device), impression_ids.to(self.device)
+        self.model.train()
+        for batch_idx, (study_id, reports_ids, impression_ids, reports_masks) in enumerate(tqdm(self.train_dataloader)):
+
+            reports_ids, impression_ids, reports_masks = reports_ids.to(self.device), impression_ids.to(self.device), reports_masks.to(self.device)
 
             output = self.model(reports_ids, impression_ids, mode='train')
 
-            n_tokens = (impression_ids[:, 1:] != 1).data.sum()
-
-            loss, loss_node = self.criterion(output, impression_ids[:, 1:], n_tokens)
-
+            loss = self.criterion(output, impression_ids, reports_masks)
             train_loss += loss.item()
-            loss_node.backward()
-            self.optimizer.step()
-            self.lr_scheduler.step()
             self.optimizer.zero_grad()
-
+            loss.backward()
+            torch.nn.utils.clip_grad_value_(self.model.parameters(), 0.1)
+            self.optimizer.step()
         log = {'train_loss': train_loss / len(self.train_dataloader)}
+
+        #     n_tokens = (impression_ids[:, 1:] != 1).data.sum()
+        #
+        #     loss, loss_node = self.criterion(output, impression_ids[:, 1:], n_tokens)
+        #
+        #     train_loss += loss.item()
+        #     train_tokens += n_tokens.cpu()
+        #
+        #     loss_node.backward()
+        #     self.optimizer.step()
+        #     self.lr_scheduler.step()
+        #     self.optimizer.zero_grad()
+        #
+        # log = {'train_loss': train_loss / train_tokens}
 
         self.model.eval()
         with torch.no_grad():
             val_gts, val_res = [], []
-            for batch_idx, (study_id, reports_ids, impression_ids) in enumerate(self.val_dataloader):
+            for batch_idx, (study_id, reports_ids, impression_ids, _) in enumerate(self.val_dataloader):
 
                 reports_ids, impression_ids = reports_ids.to(self.device), impression_ids.to(self.device)
 
@@ -371,7 +397,7 @@ class Trainer(BaseTrainer):
         self.model.eval()
         with torch.no_grad():
             test_gts, test_res = [], []
-            for batch_idx, (study_id, reports_ids, impression_ids) in enumerate(self.test_dataloader):
+            for batch_idx, (study_id, reports_ids, impression_ids, _) in enumerate(self.test_dataloader):
                 reports_ids, impression_ids = reports_ids.to(self.device), impression_ids.to(self.device)
 
                 output = self.model(reports_ids, impression_ids, mode='sample')
@@ -383,38 +409,125 @@ class Trainer(BaseTrainer):
                                         {i: [re] for i, re in enumerate(test_res)})
             log.update(**{'test_' + k: v for k, v in test_met.items()})
 
+        self.lr_scheduler.step()
+
         return log
 
-    def eval_image(self): # need to write some more code for eval to save the output as csv file for visualizing later
+    def eval_r2g(self):
 
         log = {}
         checkpoint = torch.load(os.path.join(self.checkpoint_dir, 'model_best.pth'))
 
         self.model.load_state_dict(checkpoint['state_dict'])
         self.model.eval()
+        print("model's state dict loaded")
 
         with torch.no_grad():
-            test_gts, test_res = [], []
-            for batch_idx, (images_id, images, reports_ids, reports_masks) in enumerate(tqdm(self.test_dataloader)):
-                if batch_idx > 0:
-                    break
+            test_ids, test_gts, test_res = [], [], []
+            for batch_idx, (images_id, images, reports_ids, reports_masks, _) in enumerate(self.test_dataloader):
                 images, reports_ids, reports_masks = images.to(self.device), reports_ids.to(
                     self.device), reports_masks.to(self.device)
 
-                if self.args.model_type == 'R2G':
-                    output = self.model(images, mode='sample')
-                    reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
-                else:
-                    output = self.model(images, reports_ids, mode='sample')
-                    reports = self.model.tokenizer.decode_batch(output)
+                output = self.model(images, mode='sample')
+                reports = self.model.tokenizer.decode_batch(output.cpu().numpy())
 
                 ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+
+                test_ids.extend(images_id)
                 test_res.extend(reports)
                 test_gts.extend(ground_truths)
+
             test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
                                         {i: [re] for i, re in enumerate(test_res)})
+
             test_met['BERTscore'] = self.bert_scorer(test_gts, test_res)
 
             log.update(**{'test_' + k: v for k, v in test_met.items()})
+
+            path = os.path.join(self.args.record_dir, 'mimic_cxr_' + self.args.model_type + '_report' + '.csv')
+
+            df = pd.DataFrame({'image_id': test_ids, 'actual report': test_gts, 'generated report': test_res})
+            df.to_csv(path, index=False)
+
+            print(log)
+
+        return log
+
+    def eval_sat(self):
+
+        log = {}
+        checkpoint = torch.load(os.path.join(self.checkpoint_dir, 'model_best.pth'))
+
+        self.model.load_state_dict(checkpoint['state_dict'])
+        self.model.eval()
+        print("model's state dict loaded")
+
+        with torch.no_grad():
+            test_ids, test_gts, test_res = [], [], []
+            for batch_idx, (images_id, images, reports_ids, _, report_len) in enumerate(self.test_dataloader):
+
+                images, reports_ids = images.to(self.device), reports_ids.to(self.device)
+
+                output = self.model(images, targets_len= report_len, mode='sample')
+
+                reports = self.model.tokenizer.decode_batch(output)
+
+                ground_truths = self.model.tokenizer.decode_batch(reports_ids[:, 1:].cpu().numpy())
+
+                test_ids.extend(images_id)
+                test_res.extend(reports)
+                test_gts.extend(ground_truths)
+
+            test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
+                                        {i: [re] for i, re in enumerate(test_res)})
+
+            test_met['BERTscore'] = self.bert_scorer(test_gts, test_res)
+
+            log.update(**{'test_' + k: v for k, v in test_met.items()})
+
+            path = os.path.join(self.args.record_dir, 'mimic_cxr_' + self.args.model_type + '_report' + '.csv')
+
+            df = pd.DataFrame({'image_id': test_ids, 'actual report': test_gts, 'generated report': test_res})
+            df.to_csv(path, index=False)
+
+            print(log)
+
+        return log
+
+    def eval_ss(self):
+
+        log = {}
+        checkpoint = torch.load(os.path.join(self.checkpoint_dir, 'model_best.pth'))
+
+        self.model.load_state_dict(checkpoint['state_dict'])
+        self.model.eval()
+        print("model's state dict loaded")
+
+        with torch.no_grad():
+            test_ids, test_gts, test_res = [], [], []
+            for batch_idx, (study_id, reports_ids, impression_ids, _) in enumerate(self.test_dataloader):
+                reports_ids, impression_ids = reports_ids.to(self.device), impression_ids.to(self.device)
+
+                output = self.model(reports_ids, impression_ids, mode='sample')
+                impressions = self.model.tokenizer_out.decode_batch(output)
+                ground_truths = self.model.tokenizer_out.decode_batch(impression_ids[:, 1:].cpu().numpy())
+
+                test_ids.extend(study_id)
+                test_res.extend(impressions)
+                test_gts.extend(ground_truths)
+
+            test_met = self.metric_ftns({i: [gt] for i, gt in enumerate(test_gts)},
+                                        {i: [re] for i, re in enumerate(test_res)})
+
+            test_met['BERTscore'] = self.bert_scorer(test_gts, test_res)
+
+            log.update(**{'test_' + k: v for k, v in test_met.items()})
+
+            path = os.path.join(self.args.record_dir, 'mimic_cxr_' + self.args.model_type + '_report' + '.csv')
+
+            df = pd.DataFrame({'study_id': test_ids, 'actual report': test_gts, 'generated report': test_res})
+            df.to_csv(path, index=False)
+
+            print(log)
 
         return log

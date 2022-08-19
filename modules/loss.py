@@ -24,7 +24,7 @@ def compute_loss(output, reports_ids, reports_masks):
 class LabelSmoothing(nn.Module):
     "Implement label smoothing."
 
-    def __init__(self, size, padding_idx=1, smoothing=0.0):
+    def __init__(self, size, padding_idx=1, smoothing=0.1):
         super(LabelSmoothing, self).__init__()
         self.criterion = nn.KLDivLoss(reduction="sum")
         self.padding_idx = padding_idx

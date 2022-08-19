@@ -31,7 +31,7 @@ class ImageDataset(BaseDataset):
         self.transform = transform
 
         for i in range(len(self.examples)):
-            self.examples[i]['ids'] = tokenizer(self.examples[i]['report'])[:self.max_seq_length]
+            self.examples[i]['ids'] = tokenizer(self.examples[i]['impression'])[:self.max_seq_length]
             self.examples[i]['mask'] = [1] * len(self.examples[i]['ids'])
 
     def __getitem__(self, idx):
@@ -58,15 +58,17 @@ class SSDataset(BaseDataset):
         for i in range(len(self.examples)):
             self.examples[i]['report_ids'] = tokenizer_in(self.examples[i]['report'])[:self.max_seq_length]
             self.examples[i]['impression_ids'] = tokenizer_out(self.examples[i]['impression'])[:self.max_seq_length]
+            self.examples[i]['mask'] = [1] * len(self.examples[i]['impression_ids'])
 
     def __getitem__(self, idx):
         example = self.examples[idx]
         study_id = example['study_id']
         report_ids = example['report_ids']
         impression_ids = example['impression_ids']
+        masks = example['mask']
         rep_length = len(report_ids)
         imp_length = len(impression_ids)
-        sample = (study_id, report_ids, impression_ids, rep_length, imp_length)
+        sample = (study_id, report_ids, impression_ids, rep_length, imp_length, masks)
         return sample
 
 # class BaseSSDataset(BaseDataset):
